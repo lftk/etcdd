@@ -33,18 +33,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	exit := make(chan os.Signal, 1)
+	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Kill, os.Interrupt)
 
-	select {
-	case <-exit:
-		break
-	case ev, ok := <-event:
-		if ok {
+	for {
+		select {
+		case <-exit:
+			goto EXIT
+		case ev, ok := <-event:
+			if !ok {
+				goto EXIT
+			}
 			fmt.Println(ev.Action, ev.Name, ev.Addr)
-		} else {
-			break
 		}
 	}
+
+EXIT:
 	fmt.Println("---------bye----------")
 }
