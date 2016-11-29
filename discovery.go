@@ -14,27 +14,23 @@ import (
 // SetOptions.TTL = 3 * TimeoutUnit
 var TimeoutUnit = time.Second * 3
 
-// A CancelFunc tells an operation to abandon its work.
-type CancelFunc context.CancelFunc
-
-// KeepAlive keep service online
-func KeepAlive(endpoints []string, namespace, name, addr string) (cancel CancelFunc, err error) {
+// Register service
+func Register(endpoints []string, namespace, name, addr string) (err error) {
 	api, err := newKeysAPI(endpoints)
 	if err == nil {
-		cancel, err = KeepAliveWithKeysAPI(api, namespace, name, addr)
+		err = RegisterWithKeysAPI(api, namespace, name, addr)
 	}
 	return
 }
 
-// KeepAliveWithKeysAPI use client.KeysAPI
-func KeepAliveWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (CancelFunc, error) {
+// RegisterWithKeysAPI use etcd.client.KeysAPI
+func RegisterWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (err error) {
 	key := filepath.Join(namespace, name)
-	_, err := api.Create(context.Background(), key, addr)
+	_, err = api.Create(context.Background(), key, addr)
 	if err != nil {
-		return nil, err
+		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		ticker := time.NewTicker(2 * TimeoutUnit)
 		options := &client.SetOptions{
@@ -44,33 +40,45 @@ func KeepAliveWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (Can
 			NoValueOnSuccess: true,
 		}
 
-		defer func() {
-			api.Delete(context.Background(), key, nil)
-			ticker.Stop()
-		}()
+		defer ticker.Stop()
 
 		for {
-			_, err := api.Set(ctx, key, "", options)
+			_, err := api.Set(context.Background(), key, "", options)
 			if err != nil {
 				break
 			}
-			select {
-			case <-ticker.C:
-			case <-ctx.Done():
-				return
-			}
+			<-ticker.C
 		}
 	}()
-	return CancelFunc(cancel), nil
+	return
+}
+
+// Unregister service
+func Unregister(endpoints []string, namespace, name string) (err error) {
+	api, err := newKeysAPI(endpoints)
+	if err == nil {
+		err = UnregisterWithKeysAPI(api, namespace, name)
+	}
+	return
+}
+
+// UnregisterWithKeysAPI use etcd.client.KeysAPI
+func UnregisterWithKeysAPI(api client.KeysAPI, namespace, name string) (err error) {
+	key := filepath.Join(namespace, name)
+	_, err = api.Delete(context.Background(), key, nil)
+	return
 }
 
 // Event desc service status change
-// Action: set update expire delete
+// Action: create set update expire delete
 type Event struct {
 	Action string
 	Name   string
 	Addr   string
 }
+
+// A CancelFunc tells an operation to abandon its work.
+type CancelFunc context.CancelFunc
 
 // Watch a service, returns event and cancel func
 func Watch(endpoints []string, namespace string) (event <-chan *Event, cancel CancelFunc, err error) {

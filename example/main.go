@@ -22,11 +22,11 @@ func main() {
 		fmt.Println(name, addr)
 	}
 
-	cancel, err := etcdd.KeepAlive(endpoints, "/services", "hello", "127.0.0.1:1234")
+	err = etcdd.Register(endpoints, "/services", "hello", "127.0.0.1:1234")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer cancel()
+	defer etcdd.Unregister(endpoints, "/services", "hello")
 
 	event, _, err := etcdd.Watch(endpoints, "/services")
 	if err != nil {
