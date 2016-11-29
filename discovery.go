@@ -12,43 +12,56 @@ import (
 // HeaderTimeoutPerRequest = 1 * TimeoutUnit
 // Update service ticker = 2 * TimeoutUnit
 // SetOptions.TTL = 3 * TimeoutUnit
-var TimeoutUnit = time.Second * 10
+var TimeoutUnit = time.Second * 3
 
 // A CancelFunc tells an operation to abandon its work.
 type CancelFunc context.CancelFunc
 
 // KeepAlive keep service online
 func KeepAlive(endpoints []string, namespace, name, addr string) (cancel CancelFunc, err error) {
-	if api, err := newKeysAPI(endpoints); err == nil {
-		cancel = KeepAliveWithKeysAPI(api, namespace, name, addr)
+	api, err := newKeysAPI(endpoints)
+	if err == nil {
+		cancel, err = KeepAliveWithKeysAPI(api, namespace, name, addr)
 	}
 	return
 }
 
 // KeepAliveWithKeysAPI use client.KeysAPI
-func KeepAliveWithKeysAPI(api client.KeysAPI, namespace, name, addr string) CancelFunc {
+func KeepAliveWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (CancelFunc, error) {
 	key := filepath.Join(namespace, name)
+	_, err := api.Create(context.Background(), key, addr)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		defer api.Delete(context.Background(), key, nil)
-
 		ticker := time.NewTicker(2 * TimeoutUnit)
 		options := &client.SetOptions{
-			TTL: 3 * TimeoutUnit,
+			PrevExist:        client.PrevExist,
+			TTL:              3 * TimeoutUnit,
+			Refresh:          true,
+			NoValueOnSuccess: true,
 		}
+
+		defer func() {
+			api.Delete(context.Background(), key, nil)
+			ticker.Stop()
+		}()
+
 		for {
-			_, err := api.Set(ctx, key, addr, options)
+			_, err := api.Set(ctx, key, "", options)
 			if err != nil {
 				break
 			}
 			select {
-			case <-ctx.Done():
-				break
 			case <-ticker.C:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}()
-	return CancelFunc(cancel)
+	return CancelFunc(cancel), nil
 }
 
 // Event desc service status change
@@ -61,14 +74,15 @@ type Event struct {
 
 // Watch a service, returns event and cancel func
 func Watch(endpoints []string, namespace string) (event <-chan *Event, cancel CancelFunc, err error) {
-	if api, err := newKeysAPI(endpoints); err == nil {
-		event, cancel = WatchWithKeysAPI(api, namespace)
+	api, err := newKeysAPI(endpoints)
+	if err == nil {
+		event, cancel, err = WatchWithKeysAPI(api, namespace)
 	}
 	return
 }
 
 // WatchWithKeysAPI use etcd.Client.KeysAPI
-func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, CancelFunc) {
+func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, CancelFunc, error) {
 	event := make(chan *Event, 1024)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -100,7 +114,37 @@ func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, Canc
 			}
 		}
 	}()
-	return event, CancelFunc(cancel)
+	return event, CancelFunc(cancel), nil
+}
+
+// Services list all service
+func Services(endpoints []string, namespace string) (svrs map[string]string, err error) {
+	api, err := newKeysAPI(endpoints)
+	if err == nil {
+		svrs, err = ServicesWithKeysAPI(api, namespace)
+	}
+	return
+}
+
+// ServicesWithKeysAPI use etcd.client.KeysAPI
+func ServicesWithKeysAPI(api client.KeysAPI, namespace string) (svrs map[string]string, err error) {
+	resp, err := api.Get(context.Background(), namespace, &client.GetOptions{
+		Recursive: true,
+	})
+	if err != nil {
+		return
+	}
+
+	var name string
+	svrs = make(map[string]string)
+	for _, node := range resp.Node.Nodes {
+		name, err = filepath.Rel(namespace, node.Key)
+		if err != nil {
+			break
+		}
+		svrs[name] = node.Value
+	}
+	return
 }
 
 // new etcd.client.KeysAPI
