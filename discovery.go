@@ -45,6 +45,7 @@ func RegisterWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (err 
 		for {
 			_, err := api.Set(context.Background(), key, "", options)
 			if err != nil {
+				// todo: how to notify caller?
 				break
 			}
 			<-ticker.C
@@ -100,6 +101,7 @@ func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, Canc
 			Recursive: true,
 		})
 
+		// todo: how to notify caller when happen error?
 		for {
 			resp, err := watcher.Next(ctx)
 			if err != nil {
