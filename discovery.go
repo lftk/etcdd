@@ -85,7 +85,7 @@ func watch(api client.KeysAPI, namespace string) (<-chan *Event, CancelFunc, err
 		for {
 			resp, err := watcher.Next(ctx)
 			if err != nil {
-				if cerr := ctx.Err(); cerr != nil {
+				if err == context.Canceled {
 					break
 				}
 				time.Sleep(client.DefaultRequestTimeout)
