@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"time"
 
 	etcdd "github.com/4396/etcd-discovery"
 )
@@ -22,16 +23,26 @@ func main() {
 		fmt.Println(name, addr)
 	}
 
-	err = etcdd.Register(endpoints, "/services", "hello", "127.0.0.1:1234")
+	keepalive, err := etcdd.Register(endpoints, "/services", "hello", "127.0.0.1:1234")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer etcdd.Unregister(endpoints, "/services", "hello")
+	defer func() {
+		etcdd.Unregister(endpoints, "/services", "hello")
+	}()
 
-	event, _, err := etcdd.Watch(endpoints, "/services")
+	event, cancel, err := etcdd.Watch(endpoints, "/services")
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer func() {
+		cancel()
+	}()
+
+	ticker := time.NewTicker(time.Second * 5)
+	defer func() {
+		ticker.Stop()
+	}()
 
 	exit := make(chan os.Signal)
 	signal.Notify(exit, os.Kill, os.Interrupt)
@@ -40,6 +51,11 @@ func main() {
 		select {
 		case <-exit:
 			goto EXIT
+		case <-ticker.C:
+			err := keepalive(time.Second * 5)
+			if err != nil {
+				log.Fatal(err)
+			}
 		case ev, ok := <-event:
 			if !ok {
 				goto EXIT

@@ -8,66 +8,48 @@ import (
 	"github.com/coreos/etcd/client"
 )
 
-// TimeoutUnit desc a time unit
-// HeaderTimeoutPerRequest = 1 * TimeoutUnit
-// Update service ticker = 2 * TimeoutUnit
-// SetOptions.TTL = 3 * TimeoutUnit
-var TimeoutUnit = time.Second * 3
+// KeepAliveFunc need to execute on timer
+type KeepAliveFunc func(time.Duration) error
 
 // Register service
-func Register(endpoints []string, namespace, name, addr string) (err error) {
+func Register(endpoints []string, namespace, name, addr string) (KeepAliveFunc, error) {
 	api, err := newKeysAPI(endpoints)
-	if err == nil {
-		err = RegisterWithKeysAPI(api, namespace, name, addr)
+	if err != nil {
+		return nil, err
 	}
-	return
+	return register(api, namespace, name, addr)
 }
 
-// RegisterWithKeysAPI use etcd.client.KeysAPI
-func RegisterWithKeysAPI(api client.KeysAPI, namespace, name, addr string) (err error) {
+func register(api client.KeysAPI, namespace, name, addr string) (KeepAliveFunc, error) {
 	key := filepath.Join(namespace, name)
-	_, err = api.Create(context.Background(), key, addr)
+	_, err := api.Create(context.Background(), key, addr)
 	if err != nil {
-		return
+		return nil, err
 	}
-
-	go func() {
-		ticker := time.NewTicker(2 * TimeoutUnit)
-		options := &client.SetOptions{
+	return func(timeout time.Duration) error {
+		_, err = api.Set(context.Background(), key, "", &client.SetOptions{
 			PrevExist:        client.PrevExist,
-			TTL:              3 * TimeoutUnit,
+			TTL:              2 * timeout,
 			Refresh:          true,
 			NoValueOnSuccess: true,
-		}
-
-		defer ticker.Stop()
-
-		for {
-			_, err := api.Set(context.Background(), key, "", options)
-			if err != nil {
-				// todo: how to notify caller?
-				break
-			}
-			<-ticker.C
-		}
-	}()
-	return
+		})
+		return err
+	}, nil
 }
 
 // Unregister service
-func Unregister(endpoints []string, namespace, name string) (err error) {
+func Unregister(endpoints []string, namespace, name string) error {
 	api, err := newKeysAPI(endpoints)
-	if err == nil {
-		err = UnregisterWithKeysAPI(api, namespace, name)
+	if err != nil {
+		return err
 	}
-	return
+	return unregister(api, namespace, name)
 }
 
-// UnregisterWithKeysAPI use etcd.client.KeysAPI
-func UnregisterWithKeysAPI(api client.KeysAPI, namespace, name string) (err error) {
+func unregister(api client.KeysAPI, namespace, name string) error {
 	key := filepath.Join(namespace, name)
-	_, err = api.Delete(context.Background(), key, nil)
-	return
+	_, err := api.Delete(context.Background(), key, nil)
+	return err
 }
 
 // Event desc service status change
@@ -82,16 +64,15 @@ type Event struct {
 type CancelFunc context.CancelFunc
 
 // Watch a service, returns event and cancel func
-func Watch(endpoints []string, namespace string) (event <-chan *Event, cancel CancelFunc, err error) {
+func Watch(endpoints []string, namespace string) (<-chan *Event, CancelFunc, error) {
 	api, err := newKeysAPI(endpoints)
-	if err == nil {
-		event, cancel, err = WatchWithKeysAPI(api, namespace)
+	if err != nil {
+		return nil, nil, err
 	}
-	return
+	return watch(api, namespace)
 }
 
-// WatchWithKeysAPI use etcd.Client.KeysAPI
-func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, CancelFunc, error) {
+func watch(api client.KeysAPI, namespace string) (<-chan *Event, CancelFunc, error) {
 	event := make(chan *Event, 1024)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -101,11 +82,14 @@ func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, Canc
 			Recursive: true,
 		})
 
-		// todo: how to notify caller when happen error?
 		for {
 			resp, err := watcher.Next(ctx)
 			if err != nil {
-				break
+				if cerr := ctx.Err(); cerr != nil {
+					break
+				}
+				time.Sleep(client.DefaultRequestTimeout)
+				continue
 			}
 
 			node := resp.Node
@@ -113,10 +97,7 @@ func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, Canc
 				node = resp.PrevNode
 			}
 
-			name, err := filepath.Rel(namespace, node.Key)
-			if err != nil {
-				break
-			}
+			name, _ := filepath.Rel(namespace, node.Key)
 			event <- &Event{
 				Action: resp.Action,
 				Name:   name,
@@ -128,25 +109,24 @@ func WatchWithKeysAPI(api client.KeysAPI, namespace string) (<-chan *Event, Canc
 }
 
 // Services list all service
-func Services(endpoints []string, namespace string) (svrs map[string]string, err error) {
+func Services(endpoints []string, namespace string) (map[string]string, error) {
 	api, err := newKeysAPI(endpoints)
-	if err == nil {
-		svrs, err = ServicesWithKeysAPI(api, namespace)
+	if err != nil {
+		return nil, err
 	}
-	return
+	return services(api, namespace)
 }
 
-// ServicesWithKeysAPI use etcd.client.KeysAPI
-func ServicesWithKeysAPI(api client.KeysAPI, namespace string) (svrs map[string]string, err error) {
+func services(api client.KeysAPI, namespace string) (map[string]string, error) {
 	resp, err := api.Get(context.Background(), namespace, &client.GetOptions{
 		Recursive: true,
 	})
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	var name string
-	svrs = make(map[string]string)
+	svrs := make(map[string]string)
 	for _, node := range resp.Node.Nodes {
 		name, err = filepath.Rel(namespace, node.Key)
 		if err != nil {
@@ -154,18 +134,17 @@ func ServicesWithKeysAPI(api client.KeysAPI, namespace string) (svrs map[string]
 		}
 		svrs[name] = node.Value
 	}
-	return
+	return svrs, nil
 }
 
-// new etcd.client.KeysAPI
-func newKeysAPI(endpoints []string) (api client.KeysAPI, err error) {
+func newKeysAPI(endpoints []string) (client.KeysAPI, error) {
 	cli, err := client.New(client.Config{
 		Endpoints:               endpoints,
 		Transport:               client.DefaultTransport,
-		HeaderTimeoutPerRequest: TimeoutUnit,
+		HeaderTimeoutPerRequest: client.DefaultRequestTimeout,
 	})
-	if err == nil {
-		api = client.NewKeysAPI(cli)
+	if err != nil {
+		return nil, err
 	}
-	return
+	return client.NewKeysAPI(cli), nil
 }
