@@ -11,11 +11,19 @@ import (
 )
 
 func main() {
+	svrname := "hello"
+	svraddr := "127.0.0.1:1234"
+	namespace := "/services"
 	endpoints := []string{
 		"http://127.0.0.1:2379",
 	}
 
-	svrs, err := etcdd.Services(endpoints, "/services")
+	v2etcdd, err := etcdd.NewV2(endpoints)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	svrs, err := v2etcdd.Services(namespace)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -23,15 +31,15 @@ func main() {
 		fmt.Println(name, addr)
 	}
 
-	keepalive, err := etcdd.Register(endpoints, "/services", "hello", "127.0.0.1:1234")
+	keepalive, err := v2etcdd.Register(namespace, svrname, svraddr)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() {
-		etcdd.Unregister(endpoints, "/services", "hello")
+		v2etcdd.Unregister(namespace, svrname)
 	}()
 
-	event, cancel, err := etcdd.Watch(endpoints, "/services")
+	event, cancel, err := v2etcdd.Watch(namespace)
 	if err != nil {
 		log.Fatal(err)
 	}
