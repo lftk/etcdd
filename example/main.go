@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"time"
 
-	etcdd "github.com/4396/etcd-discovery"
-	"github.com/4396/etcd-discovery/api"
+	"github.com/4396/etcdd"
+	"github.com/4396/etcdd/api"
 )
 
 var (

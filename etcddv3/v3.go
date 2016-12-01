@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/4396/etcd-discovery/api"
+	"github.com/4396/etcdd/api"
 	"github.com/coreos/etcd/clientv3"
 )
 

@@ -1,9 +1,9 @@
-package discovery
+package etcdd
 
 import (
-	"github.com/4396/etcd-discovery/api"
-	"github.com/4396/etcd-discovery/etcddv2"
-	"github.com/4396/etcd-discovery/etcddv3"
+	"github.com/4396/etcdd/api"
+	"github.com/4396/etcdd/etcddv2"
+	"github.com/4396/etcdd/etcddv3"
 )
 
 func NewV2(endpoints []string) (api.Discoverer, error) {
