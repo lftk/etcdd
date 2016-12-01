@@ -39,6 +39,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer func() {
+		d.Close()
+	}()
 
 	svrs, err := d.Services(namespace)
 	if err != nil {
