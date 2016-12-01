@@ -85,10 +85,12 @@ func (d *Discoverer) Watch(namespace string) (<-chan *api.Event, api.CancelFunc,
 			case resp := <-wc:
 				for _, ev := range resp.Events {
 					action := ev.Type.String()
+					key := string(ev.Kv.Key)
+					name, _ := filepath.Rel(namespace, key)
 					event <- &api.Event{
-						Action: strings.ToLower(action),
-						Name:   string(ev.Kv.Key),
+						Name:   name,
 						Addr:   string(ev.Kv.Value),
+						Action: strings.ToLower(action),
 					}
 				}
 			}
@@ -105,7 +107,9 @@ func (d *Discoverer) Services(namespace string) (map[string]string, error) {
 	}
 	svrs := make(map[string]string)
 	for _, kv := range resp.Kvs {
-		svrs[string(kv.Key)] = string(kv.Value)
+		key := string(kv.Key)
+		name, _ := filepath.Rel(namespace, key)
+		svrs[name] = string(kv.Value)
 	}
 	return svrs, nil
 }
