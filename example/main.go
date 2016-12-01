@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -8,22 +9,38 @@ import (
 	"time"
 
 	etcdd "github.com/4396/etcd-discovery"
+	"github.com/4396/etcd-discovery/api"
+)
+
+var (
+	svrname = flag.String("name", "hello", "service name")
+	svraddr = flag.String("addr", "127.0.0.1:1234", "service address")
+	etcdver = flag.Int("ver", 3, "service address")
 )
 
 func main() {
-	svrname := "hello"
-	svraddr := "127.0.0.1:1234"
+	flag.Parse()
+
 	namespace := "/services"
 	endpoints := []string{
 		"http://127.0.0.1:2379",
 	}
 
-	v2etcdd, err := etcdd.NewV2(endpoints)
+	var err error
+	var d api.Discoverer
+	if *etcdver == 2 {
+		d, err = etcdd.NewV2(endpoints)
+	} else if *etcdver == 3 {
+		d, err = etcdd.NewV3(endpoints)
+	} else {
+		log.Fatal("invalid etcd version")
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	svrs, err := v2etcdd.Services(namespace)
+	svrs, err := d.Services(namespace)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -31,15 +48,16 @@ func main() {
 		fmt.Println(name, addr)
 	}
 
-	keepalive, err := v2etcdd.Register(namespace, svrname, svraddr)
+	timeout := time.Second * 5
+	keepalive, err := d.Register(namespace, *svrname, *svraddr, timeout*2)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer func() {
-		v2etcdd.Unregister(namespace, svrname)
+		d.Unregister(namespace, *svrname)
 	}()
 
-	event, cancel, err := v2etcdd.Watch(namespace)
+	event, cancel, err := d.Watch(namespace)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,7 +65,7 @@ func main() {
 		cancel()
 	}()
 
-	ticker := time.NewTicker(time.Second * 5)
+	ticker := time.NewTicker(timeout)
 	defer func() {
 		ticker.Stop()
 	}()
@@ -60,7 +78,7 @@ func main() {
 		case <-exit:
 			goto EXIT
 		case <-ticker.C:
-			err := keepalive(time.Second * 5)
+			err := keepalive()
 			if err != nil {
 				log.Fatal(err)
 			}
