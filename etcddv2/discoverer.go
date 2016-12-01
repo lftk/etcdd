@@ -1,35 +1,22 @@
-package discovery
+package etcddv2
 
 import (
 	"context"
 	"path/filepath"
 	"time"
 
+	"github.com/4396/etcd-discovery/api"
 	"github.com/coreos/etcd/client"
 )
 
-// KeepAliveFunc need to execute on timer
-type KeepAliveFunc func(time.Duration) error
-
-// A CancelFunc tells an operation to abandon its work.
-type CancelFunc context.CancelFunc
-
-// Event desc service status change
-// Action: create set update expire delete
-type Event struct {
-	Action string
-	Name   string
-	Addr   string
-}
-
-// A V2 object contains Client and KeysAPI
-type V2 struct {
+// A Discoverer object contains Client and KeysAPI
+type Discoverer struct {
 	cli client.Client
 	api client.KeysAPI
 }
 
-// NewV2 returns v2 discoverer
-func NewV2(endpoints []string) (*V2, error) {
+// New returns v2 discoverer
+func New(endpoints []string) (*Discoverer, error) {
 	cli, err := client.New(client.Config{
 		Endpoints:               endpoints,
 		Transport:               client.DefaultTransport,
@@ -39,28 +26,38 @@ func NewV2(endpoints []string) (*V2, error) {
 		return nil, err
 	}
 	api := client.NewKeysAPI(cli)
-	v2 := &V2{
+	d := &Discoverer{
 		cli: cli,
 		api: api,
 	}
-	return v2, nil
+	return d, nil
+}
+
+// Close discoverer
+func (d *Discoverer) Close() error {
+	return nil
 }
 
 // Register service
-func (v *V2) Register(namespace, name, addr string) (KeepAliveFunc, error) {
+func (d *Discoverer) Register(namespace, name, addr string, timeout time.Duration) (api.KeepAliveFunc, error) {
 	key := filepath.Join(namespace, name)
-	_, err := v.api.Create(context.TODO(), key, addr)
+	_, err := d.api.Set(context.TODO(), key, addr, &client.SetOptions{
+		PrevExist:        client.PrevNoExist,
+		TTL:              timeout,
+		Refresh:          false,
+		NoValueOnSuccess: true,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return v.keepAlive(key), nil
+	return d.keepAlive(key, timeout), nil
 }
 
-func (v *V2) keepAlive(key string) KeepAliveFunc {
-	return func(timeout time.Duration) error {
-		_, err := v.api.Set(context.Background(), key, "", &client.SetOptions{
+func (d *Discoverer) keepAlive(key string, timeout time.Duration) api.KeepAliveFunc {
+	return func() error {
+		_, err := d.api.Set(context.TODO(), key, "", &client.SetOptions{
 			PrevExist:        client.PrevExist,
-			TTL:              2 * timeout,
+			TTL:              timeout,
 			Refresh:          true,
 			NoValueOnSuccess: true,
 		})
@@ -69,20 +66,20 @@ func (v *V2) keepAlive(key string) KeepAliveFunc {
 }
 
 // Unregister service
-func (v *V2) Unregister(namespace, name string) error {
+func (d *Discoverer) Unregister(namespace, name string) error {
 	key := filepath.Join(namespace, name)
-	_, err := v.api.Delete(context.TODO(), key, nil)
+	_, err := d.api.Delete(context.TODO(), key, nil)
 	return err
 }
 
 // Watch services, returns event and cancel func
-func (v *V2) Watch(namespace string) (<-chan *Event, CancelFunc, error) {
-	event := make(chan *Event, 1024)
+func (d *Discoverer) Watch(namespace string) (<-chan *api.Event, api.CancelFunc, error) {
+	event := make(chan *api.Event, 1024)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		defer close(event)
 
-		watcher := v.api.Watcher(namespace, &client.WatcherOptions{
+		watcher := d.api.Watcher(namespace, &client.WatcherOptions{
 			Recursive: true,
 		})
 
@@ -102,19 +99,19 @@ func (v *V2) Watch(namespace string) (<-chan *Event, CancelFunc, error) {
 			}
 
 			name, _ := filepath.Rel(namespace, node.Key)
-			event <- &Event{
+			event <- &api.Event{
 				Action: resp.Action,
 				Name:   name,
 				Addr:   node.Value,
 			}
 		}
 	}()
-	return event, CancelFunc(cancel), nil
+	return event, api.CancelFunc(cancel), nil
 }
 
 // Services list all service
-func (v *V2) Services(namespace string) (map[string]string, error) {
-	resp, err := v.api.Get(context.TODO(), namespace, &client.GetOptions{
+func (d *Discoverer) Services(namespace string) (map[string]string, error) {
+	resp, err := d.api.Get(context.TODO(), namespace, &client.GetOptions{
 		Recursive: true,
 	})
 	if err != nil {
