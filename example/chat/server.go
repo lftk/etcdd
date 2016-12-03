@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"net"
-
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/4396/etcdd"
@@ -10,96 +12,78 @@ import (
 
 const namespace = "/services/chatroom/"
 
-type Callback func(name string, send net.Conn, receive net.Conn) error
+type Conn struct {
+	reader net.Conn
+	writer net.Conn
+}
+
+type Handler interface {
+	New(name string, conn *Conn) error
+	Delete(name string) error
+}
 
 // RunServer listen tcp port and register service
-func RunServer(endpoints []string, name string, callback Callback) (err error) {
-	// listen tcp port
+func RunServer(endpoints []string, name string, handle Handler) (err error) {
+	// listen a local port
 	l, err := net.Listen("tcp", "127.0.0.1:")
 	if err != nil {
 		return
 	}
-	defer l.Close()
 
-	receive := make(chan net.Conn, 16)
 	cherr := make(chan error, 1)
-
+	receive := make(chan net.Conn, 16)
 	go func() {
 		for {
 			conn, err := l.Accept()
 			if err != nil {
 				cherr <- err
-				break
 			}
 			receive <- conn
+			break
 		}
 	}()
 
-	// register, keepalive and watch service
+	// new etcd v3 discoverer
 	d, err := etcdd.NewV3(endpoints)
 	if err != nil {
 		return
 	}
+	defer d.Close()
 
-	svrs, err := d.Services(namespace)
-	if err != nil {
-		return
-	}
-	for name, addr := range svrs {
-		var conn net.Conn
-		conn, err = net.Dial("tcp", addr)
-		if err != nil {
-			return
-		}
-		err = callback(name, conn, nil)
-		if err != nil {
-			return
-		}
-	}
-
+	// register service
+	addr := l.Addr().String()
 	timeout := time.Second * 5
-	keepalive, err := d.Register(namespace, name, l.Addr().String(), timeout*2)
+	keepalive, err := d.Register(namespace, name, addr, timeout*2)
 	if err != nil {
 		return
 	}
+	// unregister service
 	defer d.Unregister(namespace, name)
 
+	// watch service
 	event, cancel, err := d.Watch(namespace)
 	if err != nil {
 		return
 	}
 	defer cancel()
 
+	exit := make(chan os.Signal)
+	signal.Notify(exit, os.Kill, os.Interrupt)
+
 	ticker := time.NewTicker(timeout)
 	defer ticker.Stop()
 	for {
 		select {
+		case <-exit:
+			cherr <- errors.New("user interrupt")
+		case <-ticker.C:
+			cherr <- keepalive()
+		case ev := <-event:
+			_ = ev
+		case conn := <-receive:
+			_ = conn
 		case err = <-cherr:
 			return
-		case <-ticker.C:
-			err = keepalive()
-			if err != nil {
-				return
-			}
-		case ev := <-event:
-			if ev.Action == "put" {
-				var conn net.Conn
-				conn, err = net.Dial("tcp", ev.Addr)
-				if err != nil {
-					return
-				}
-				err = callback(ev.Name, conn, nil)
-				if err != nil {
-					return
-				}
-			} else if ev.Action == "delete" {
-
-			}
-		case conn := <-receive:
-			err = callback("", nil, conn)
-			if err != nil {
-				return
-			}
 		}
 	}
 }
