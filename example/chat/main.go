@@ -1,10 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"log"
+	"os"
 )
 
 func main() {
@@ -12,17 +13,29 @@ func main() {
 		"127.0.0.1:2379",
 	}
 
-	name := randomName()
-	fmt.Println(name)
-
-	log.Fatal(RunServer(endpoints, name, nil))
-}
-
-func randomName() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
 	if err != nil {
 		log.Fatal(err)
 	}
-	return hex.EncodeToString(b)
+	name := hex.EncodeToString(b)
+
+	user := NewUser(name)
+	go func() {
+		r := bufio.NewReader(os.Stdin)
+		for {
+			line, _, err := r.ReadLine()
+			if err == nil {
+				err = user.Send(line)
+			}
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}()
+
+	err = RunServer(endpoints, name, user)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
