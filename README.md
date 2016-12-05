@@ -5,7 +5,7 @@ etcd service discovery, compatible with v2 and v3 etcd.
 ## getting
 
 ```sh
-go get github.com/4396/etcd
+go get github.com/4396/etcdd
 ```
 
 ## usage
