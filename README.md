@@ -97,6 +97,15 @@ if ver != 3 {
 }
 ```
 
+### close
+
+```golang
+err := dv3.Close()
+if err != nil {
+    // ...
+}
+```
+
 ## example
 
 - [api usage](./example/etcdd)

@@ -27,6 +27,6 @@ type Discoverer interface {
 	Unregister(namespace, name string) error
 	Watch(namespace string) (<-chan *Event, CancelFunc, error)
 	Services(namespace string) (map[string]string, error)
-	Close() error
 	Version() int
+	Close() error
 }
