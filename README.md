@@ -32,7 +32,7 @@ if err != nil {
 ```golang
 svrname := "svr1"
 svraddr := "127.0.0.1:1234"
-namespace := "/services/"
+namespace := "/services"
 timeout := time.Second * 5
 
 // register service, returns keepalive function
@@ -88,7 +88,16 @@ for name, addr := range svrs {
 }
 ```
 
+### version
+
+```golang
+ver := dv3.Version()
+if ver != 3 {
+    // ...
+}
+```
+
 ## example
 
-- [api usage](./example/etcdd/main.go)
-- [a simple chat room](./example/chat/main.go)
+- [api usage](./example/etcdd)
+- [a simple chat room](./example/chat)

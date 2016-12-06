@@ -18,8 +18,15 @@ type Discoverer struct {
 
 // New returns v3 discoverer
 func New(endpoints []string) (*Discoverer, error) {
+	return NewWithAuth(endpoints, "", "")
+}
+
+// NewWithAuth need username and password
+func NewWithAuth(endpoints []string, username, password string) (*Discoverer, error) {
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints: endpoints,
+		Username:  username,
+		Password:  password,
 	})
 	if err != nil {
 		return nil, err
@@ -112,4 +119,9 @@ func (d *Discoverer) Services(namespace string) (map[string]string, error) {
 		svrs[name] = string(kv.Value)
 	}
 	return svrs, nil
+}
+
+// Version returns etcd client version
+func (d *Discoverer) Version() int {
+	return 3
 }
